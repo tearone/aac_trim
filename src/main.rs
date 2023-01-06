@@ -3,13 +3,16 @@ use fdk_aac::dec::{Decoder, DecoderError, Transport};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
 use std::{env, vec};
+use waveform::Waveform;
 
 mod adts;
+mod waveform;
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
     let input_path = args[1].as_str();
     let output_path = args[2].as_str();
+    let waveform_path = args[2].as_str();
     let file = File::open(input_path).expect("Error opening file");
 
     let metadata = file.metadata().expect("Error getting file metadata");
@@ -17,7 +20,13 @@ fn main() {
     let buf = BufReader::new(file);
 
     let mut decoder = MpegAacDecoder::new(buf, size).expect("Error creating decoder");
-    decoder.decode_adts_stream_waveform_silence(output_path);
+    if let Some(waveform) = decoder.process(output_path) {
+        let mut waveform_file =
+            File::create(waveform_path).expect("Failed to create waveform file");
+        waveform_file
+            .write_all(&waveform)
+            .expect("Failed to write waveform file");
+    }
 }
 
 pub struct MpegAacDecoder<R>
@@ -67,7 +76,7 @@ where
         }
     }
 
-    pub fn decode_adts_stream_waveform_silence(&mut self, output_path: &str) -> Option<()> {
+    pub fn process(&mut self, output_path: &str) -> Option<Vec<u8>> {
         let tracks = self.mp4_reader.tracks();
         let track = tracks.get(&self.track_id).expect("Track ID not found");
         let timescale = track.timescale();
@@ -78,14 +87,32 @@ where
 
         let mut output = File::create(output_path).unwrap();
 
-        let mut pcm = vec![0; 2048];
+        let mut pcm = vec![0; 8192];
         let mut frame: Vec<u8>;
+        let mut waveform = Vec::<f64>::new();
 
         loop {
             let result = match self.decoder.decode_frame(&mut pcm) {
                 Err(DecoderError::NOT_ENOUGH_BITS) => {
                     let sample_result = self.mp4_reader.read_sample(self.track_id, self.position);
-                    let sample = sample_result.expect("Error reading sample")?;
+                    let sample = match sample_result.expect("Error reading sample") {
+                        Some(sample) => sample,
+                        _ => {
+                            let mut avg = Vec::<f64>::new();
+                            let mut max = 0_f64;
+                            for offset in 1..50 {
+                                let (val, maxval) = Waveform::avgmax(
+                                    &waveform[(offset - 1) * (waveform.len() / 50)
+                                        ..offset * (waveform.len() / 50)],
+                                );
+                                if maxval > max {
+                                    max = maxval
+                                }
+                                avg.push(val);
+                            }
+                            return Some(Waveform::balance(&avg, max));
+                        }
+                    };
                     let adts_header = Adts::construct_adts_header(
                         &sample,
                         &audio_profile,
@@ -98,7 +125,10 @@ where
                     self.position += 1;
                     let _bytes_read = match self.decoder.fill(&frame) {
                         Ok(bytes_read) => bytes_read,
-                        Err(_) => return None,
+                        Err(err) => {
+                            println!("DecoderError: {}", err);
+                            return None;
+                        }
                     };
                     let res = self.decoder.decode_frame(&mut pcm);
                     let silent_samples = pcm.iter().filter(|e| e == &&0).count();
@@ -106,9 +136,21 @@ where
                     let position = self.position * self.mp4_reader.timescale() / timescale;
 
                     if silent_samples < pcm.len() / 2
-                        || position > 15 && (position as u64) < duration - 15
+                        || position > 20 && (position as u64) < duration - 30
                     {
-                        output.write_all(&frame).expect("Could not write file");
+                        output
+                            .write_all(&frame)
+                            .expect("Could not write output file");
+
+                        let mut avg = Vec::<f64>::new();
+                        for offset in 1..10 {
+                            avg.push(Waveform::avgfilter(
+                                &pcm[(offset - 1) * (pcm.len() / 10)..offset * (pcm.len() / 10)],
+                            ));
+                        }
+                        if let Some(chunk) = Waveform::rms_range(&avg) {
+                            waveform.push(chunk);
+                        }
                     }
                     res
                 }
