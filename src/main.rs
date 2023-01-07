@@ -12,7 +12,7 @@ fn main() {
     let args = env::args().collect::<Vec<String>>();
     let input_path = args[1].as_str();
     let output_path = args[2].as_str();
-    let waveform_path = args[2].as_str();
+    let waveform_path = args[3].as_str();
     let file = File::open(input_path).expect("Error opening file");
 
     let metadata = file.metadata().expect("Error getting file metadata");
@@ -148,7 +148,7 @@ where
                                 &pcm[(offset - 1) * (pcm.len() / 10)..offset * (pcm.len() / 10)],
                             ));
                         }
-                        if let Some(chunk) = Waveform::rms_range(&avg) {
+                        if let Some(chunk) = Waveform::peak_range(&avg) {
                             waveform.push(chunk);
                         }
                     }

@@ -39,25 +39,25 @@ impl Waveform {
             .collect::<Vec<u8>>()
     }
 
-    pub fn rms_range(vec: &[f64]) -> Option<f64> {
-        let mut sq = 0_f64;
+    // pub fn rms_range(vec: &[f64]) -> Option<f64> {
+    //     let mut sq = 0_f64;
 
-        for i in vec {
-            sq += i * i;
-        }
+    //     for i in vec {
+    //         sq += i * i;
+    //     }
 
-        let mean: f64 = sq as f64 / vec.len() as f64;
+    //     let mean: f64 = sq as f64 / vec.len() as f64;
 
-        let root = mean.sqrt();
+    //     let root = mean.sqrt();
 
-        if !root.is_nan() {
-            Some(root)
-        } else {
-            None
-        }
-    }
+    //     if !root.is_nan() {
+    //         Some(root)
+    //     } else {
+    //         None
+    //     }
+    // }
 
-    pub fn peak_range(vec: &[f64]) -> f64 {
+    pub fn peak_range(vec: &[f64]) -> Option<f64> {
         let mut max = 0_f64;
 
         for i in vec {
@@ -66,6 +66,6 @@ impl Waveform {
             }
         }
 
-        max
+        Some(max)
     }
 }
