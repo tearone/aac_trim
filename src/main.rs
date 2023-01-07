@@ -1,6 +1,6 @@
 use adts::Adts;
 use fdk_aac::dec::{Decoder, DecoderError, Transport};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, Write};
 use std::{env, vec};
 use waveform::Waveform;
@@ -13,6 +13,35 @@ fn main() {
     let input_path = args[1].as_str();
     let output_path = args[2].as_str();
     let waveform_path = args[3].as_str();
+    let ffmpeg_path = args[4].as_str();
+
+    let tmp_path = &format!("{}.fixed.m4a", input_path);
+    let mut process = subprocess::Popen::create(
+        &[
+            ffmpeg_path,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "repeat+info",
+            "-vn",
+            "-i",
+            input_path,
+            "-f",
+            "mp4",
+            "-map",
+            "0",
+            "-dn",
+            "-ignore_unknown",
+            "-c",
+            "copy",
+            tmp_path,
+        ],
+        subprocess::PopenConfig::default(),
+    )
+    .expect("Failed to open ffmpeg");
+    process.wait().expect("Failed to run ffmpeg");
+    fs::rename(tmp_path, input_path).expect("Failed to rename input file");
+
     let file = File::open(input_path).expect("Error opening file");
 
     let metadata = file.metadata().expect("Error getting file metadata");
@@ -95,7 +124,9 @@ where
             let result = match self.decoder.decode_frame(&mut pcm) {
                 Err(DecoderError::NOT_ENOUGH_BITS) => {
                     let sample_result = self.mp4_reader.read_sample(self.track_id, self.position);
-                    let sample = match sample_result.expect("Error reading sample") {
+                    let sample = match sample_result
+                        .expect(&format!("Error reading sample at {}", self.position))
+                    {
                         Some(sample) => sample,
                         _ => {
                             let mut avg = Vec::<f64>::new();
@@ -126,7 +157,7 @@ where
                     let _bytes_read = match self.decoder.fill(&frame) {
                         Ok(bytes_read) => bytes_read,
                         Err(err) => {
-                            println!("DecoderError: {}", err);
+                            println!("DecoderError (read): {}", err);
                             return None;
                         }
                     };
@@ -157,7 +188,7 @@ where
                 val => val,
             };
             if let Err(err) = result {
-                println!("DecoderError: {}", err);
+                println!("DecoderError (result): {}", err);
                 return None;
             }
             let decoded_fram_size = self.decoder.decoded_frame_size();
